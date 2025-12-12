@@ -4,8 +4,9 @@
 <meta charset="UTF-8">
 <title>{{ p.name }}</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+
 <style>
-    /* GLOBAL */
+/* GLOBAL */
 body {
     margin: 0;
     background: #f5f5f7;
@@ -25,11 +26,9 @@ body {
     top: 0;
     z-index: 10;
 }
-
 .landing-logo img {
     width: 130px;
 }
-
 .landing-admin-link {
     margin-left: 20px;
     font-weight: 600;
@@ -54,7 +53,6 @@ body {
 .left-view {
     flex: 1;
 }
-
 .main-image-box {
     width: 100%;
     height: 520px;
@@ -70,7 +68,6 @@ body {
     height: 100%;
     object-fit: cover;
 }
-
 .thumb-row {
     display: flex;
     gap: 12px;
@@ -90,23 +87,20 @@ body {
     transform: scale(1.05);
 }
 
-/* RIGHT SIDE INFO */
+/* RIGHT INFO */
 .right-info {
     flex: 1;
 }
-
 h1 {
     margin: 0;
     font-size: 32px;
     font-weight: 700;
 }
-
 .price-row {
     margin: 20px 0;
     font-size: 30px;
     font-weight: 600;
 }
-
 .old-price {
     margin-left: 12px;
     color: #888;
@@ -119,7 +113,6 @@ h1 {
     gap: 10px;
     margin-top: 15px;
 }
-
 .size-btn {
     background: #fff;
     padding: 10px 20px;
@@ -129,7 +122,6 @@ h1 {
     cursor: pointer;
     transition: .3s;
 }
-
 .size-btn.active,
 .size-btn:hover {
     border-color: #6a35ff;
@@ -164,7 +156,6 @@ h1 {
         width: 100px;
     }
 }
-
 </style>
 </head>
 
@@ -188,15 +179,21 @@ h1 {
 
     <!-- LEFT VIEW -->
     <div class="left-view">
+
         <div class="main-image-box">
-            <img id="mainImage" src="{{ url_for('uploaded_file', filename=p.images[0]) }}">
+            {% if p.images and p.images[0] %}
+                <img id="mainImage" src="{{ url_for('uploaded_file', filename=p.images[0]) }}" alt="{{ p.name }}">
+            {% else %}
+                <img id="mainImage" src="https://via.placeholder.com/400x400?text=No+Image" alt="No Image">
+            {% endif %}
         </div>
 
         <div class="thumb-row">
             {% for img in p.images %}
-                <img src="{{ url_for('uploaded_file', filename=img) }}" onclick="changeImage(this.src)">
+                <img src="{{ url_for('uploaded_file', filename=img) }}" onclick="changeImage(this.src)" alt="thumbnail">
             {% endfor %}
         </div>
+
     </div>
 
     <!-- RIGHT INFO -->
@@ -220,25 +217,32 @@ h1 {
             {% endif %}
         </div>
 
-
+        <!-- ADD TO CART FORM -->
         <form action="{{ url_for('add_to_cart', product_id=p._id) }}" method="POST">
             
             <h3>Select Size:</h3>
+
             <div class="size-box">
                 {% for s in ["S","M","L","XL","XXL"] %}
                     {% if s in p.sizes %}
-                        <button type="button" class="size-btn" id="btn_{{ s }}" onclick="selectSize('{{ s }}')">{{ s }}</button>
+                        <button type="button" 
+                                class="size-btn {% if loop.first %}active{% endif %}" 
+                                id="btn_{{ s }}" 
+                                onclick="selectSize('{{ s }}')">
+                                {{ s }}
+                        </button>
                     {% endif %}
                 {% endfor %}
             </div>
 
-            <input type="hidden" name="size" id="selectedSize" value="M">
+            <!-- DEFAULT SIZE -->
+            <input type="hidden" name="size" id="selectedSize" value="{{ p.sizes[0] if p.sizes else '' }}">
             <input type="hidden" name="quantity" value="1">
 
-            <button type="submit" class="add-btn">
-                Purchase Now
-            </button>
+            <button type="submit" class="add-btn">Purchase Now</button>
+
         </form>
+
     </div>
 
 </div>
@@ -246,11 +250,16 @@ h1 {
 <script>
 function selectSize(size) {
     document.getElementById("selectedSize").value = size;
-    let btns = document.querySelectorAll(".size-btn");
-    btns.forEach(btn => btn.classList.remove("active"));
+
+    let buttons = document.querySelectorAll(".size-btn");
+    buttons.forEach(b => b.classList.remove("active"));
+
     document.getElementById("btn_" + size).classList.add("active");
 }
-function changeImage(link) { document.getElementById("mainImage").src = link; }
+
+function changeImage(link) {
+    document.getElementById("mainImage").src = link;
+}
 </script>
 
 </body>
