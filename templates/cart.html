@@ -136,7 +136,9 @@ select,input[type=number]{
     {% for item in items %}
       <div class="cart-item">
 
-        <img src="{{ url_for('uploaded_file', filename=item.image) }}" alt="product">
+        <!-- FIXED IMAGE -->
+        <img src="{{ url_for('uploaded_file', filename=item.image) }}"
+             alt="{{ item.name }}">
 
         <div class="item-info">
 
@@ -150,7 +152,7 @@ select,input[type=number]{
             </span>
           </div>
 
-          <!-- UPDATE CART ITEM -->
+          <!-- UPDATE FORM -->
           <form action="{{ url_for('update_cart_item', item_id=item['_id']) }}"
                 method="POST" class="update-form">
             
@@ -158,29 +160,38 @@ select,input[type=number]{
 
               <div>
                 <label>Size</label><br>
-                <select name="size" data-item="{{ item._id }}" class="size-select" required>
-                  <option value="S" {% if item.size=='S' %}selected{% endif %}>S</option>
-                  <option value="M" {% if item.size=='M' %}selected{% endif %}>M</option>
-                  <option value="L" {% if item.size=='L' %}selected{% endif %}>L</option>
-                  <option value="XL" {% if item.size=='XL' %}selected{% endif %}>XL</option>
-                  <option value="XXL" {% if item.size=='XXL' %}selected{% endif %}>XXL</option>
+                <select name="size"
+                        data-item="{{ item._id }}"
+                        class="size-select"
+                        required>
+
+                  {% for s in ["S","M","L","XL","XXL"] %}
+                    <option value="{{ s }}"
+                      {% if item.size == s %}selected{% endif %}>
+                      {{ s }}
+                    </option>
+                  {% endfor %}
+
                 </select>
               </div>
 
               <div>
                 <label>Qty</label><br>
-                <input type="number" name="quantity" min="1" 
-                       value="{{ item.quantity }}" required>
+                <input type="number"
+                       name="quantity"
+                       min="1"
+                       value="{{ item.quantity }}"
+                       required>
               </div>
 
             </div>
 
-            <button type="submit"
-                    class="update-btn"
-                    style="display:none;">Update</button>
+            <button type="submit" class="update-btn" style="display:none;">
+              Update
+            </button>
           </form>
 
-          <!-- DELETE CART ITEM -->
+          <!-- DELETE ITEM -->
           <form action="{{ url_for('delete_cart_item', item_id=item['_id']) }}"
                 method="POST" style="margin-top:10px;">
               <button type="submit" class="remove-btn">Remove</button>
@@ -190,7 +201,7 @@ select,input[type=number]{
       </div>
     {% endfor %}
 
-    <!-- PAYMENT BUTTON -->
+    <!-- PAYMENT -->
     <a href="{{ url_for('checkout') }}">
       <button class="pay-btn">Proceed to Payment</button>
     </a>
@@ -206,7 +217,7 @@ select,input[type=number]{
 </div>
 
 
-<!-- JS SECTION -->
+<!-- JS AUTO-UPDATE -->
 <script>
 
 function updateTotals() {
