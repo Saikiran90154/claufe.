@@ -9,6 +9,7 @@ import razorpay
 import hmac
 import hashlib
 import json
+import traceback
 
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
@@ -476,65 +477,89 @@ def shiprocket_create_order(order, address):
 # =====================================================
 @app.route("/verify-payment", methods=["POST"])
 def verify_payment():
-    data = request.get_json()
-
-    payment_id = data.get("razorpay_payment_id")
-    order_id = data.get("razorpay_order_id")
-    signature = data.get("razorpay_signature")
-
-    message = f"{order_id}|{payment_id}"
-    generated_signature = hmac.new(
-        bytes(RAZORPAY_SECRET, 'utf-8'),
-        bytes(message, 'utf-8'),
-        hashlib.sha256
-    ).hexdigest()
-
-    if not hmac.compare_digest(generated_signature, signature):
-        return jsonify({"success": False, "redirect_url": FAILED_URL})
-
-    # CART
-    items = list(cart_col.find({"user_email": session["email"]}))
-    total = sum(float(i["price"]) * i["quantity"] for i in items)
-
-    # ADDRESS SAVED BEFORE PAYMENT
-    address = session.get("checkout_address", {})
-
-    # SAVE ORDER
-    new_order_id = orders_col.insert_one({
-        "user_email": session["email"],
-        "items": items,
-        "total": total,
-        "status": "Paid",
-        "payment_id": payment_id,
-        "order_id": order_id,
-        "payment_method": "Prepaid",
-        "address": address,
-        "created_at": datetime.datetime.now()
-    }).inserted_id
-
-    order_doc = orders_col.find_one({"_id": new_order_id})
-
-    # CREATE SHIPROCKET ORDER
     try:
-        ship_data = shiprocket_create_order(order_doc, address)
-        orders_col.update_one(
-            {"_id": new_order_id},
-            {"$set": {
-                "shiprocket_order_id": ship_data.get("order_id"),
-                "shiprocket_shipment_id": ship_data.get("shipment_id"),
-                "shiprocket_status": ship_data.get("status"),
-                "shiprocket_response": ship_data
-            }}
-        )
+        data = request.get_json()
+
+        payment_id = data.get("razorpay_payment_id")
+        order_id = data.get("razorpay_order_id")
+        signature = data.get("razorpay_signature")
+        email = data.get("email")   # <-- sent from JS
+        address = data.get("address")  # <-- full address sent from JS
+
+        if not payment_id or not order_id or not signature or not email:
+            return jsonify({
+                "success": False,
+                "redirect_url": FAILED_URL,
+                "error": "Missing required fields"
+            })
+
+        # Verify Signature
+        message = f"{order_id}|{payment_id}"
+        generated_signature = hmac.new(
+            RAZORPAY_SECRET.encode(),
+            message.encode(),
+            hashlib.sha256
+        ).hexdigest()
+
+        if signature != generated_signature:
+            return jsonify({
+                "success": False,
+                "redirect_url": FAILED_URL,
+                "error": "Signature mismatch"
+            })
+
+        # Get cart items from MongoDB
+        items = list(cart_col.find({"user_email": email}))
+        total = sum(float(i["price"]) * int(i["quantity"]) for i in items)
+
+        # Save Order to MongoDB
+        new_order_id = orders_col.insert_one({
+            "user_email": email,
+            "items": items,
+            "total": total,
+            "status": "Paid",
+            "payment_id": payment_id,
+            "order_id": order_id,
+            "payment_method": "Prepaid",
+            "address": address,
+            "created_at": datetime.datetime.now()
+        }).inserted_id
+
+        order_doc = orders_col.find_one({"_id": new_order_id})
+
+        # Shiprocket
+        try:
+            ship_data = shiprocket_create_order(order_doc, address)
+            orders_col.update_one(
+                {"_id": new_order_id},
+                {"$set": {
+                    "shiprocket_order_id": ship_data.get("order_id"),
+                    "shiprocket_shipment_id": ship_data.get("shipment_id"),
+                    "shiprocket_status": ship_data.get("status"),
+                    "shiprocket_response": ship_data
+                }}
+            )
+        except Exception as e:
+            orders_col.update_one(
+                {"_id": new_order_id},
+                {"$set": {"shiprocket_error": str(e)}}
+            )
+
+        # Clear cart
+        cart_col.delete_many({"user_email": email})
+
+        return jsonify({
+            "success": True,
+            "redirect_url": SUCCESS_URL
+        })
+
     except Exception as e:
-        print("Shiprocket Error:", e)
-        # record error on order for debugging
-        orders_col.update_one({"_id": new_order_id}, {"$set": {"shiprocket_error": str(e)}})
-
-    cart_col.delete_many({"user_email": session["email"]})
-
-    # After successful verification and order save, redirect user to landing page
-    return jsonify({"success": True, "redirect_url": url_for("landing")})
+        print("Verify Payment Error:", e)
+        return jsonify({
+            "success": False,
+            "redirect_url": FAILED_URL,
+            "error": str(e)
+        })
 
 
 # Razorpay webhook endpoint
@@ -717,64 +742,72 @@ def add_product():
         return need
 
     if request.method == "POST":
-        name = request.form.get("name", "").strip()
-        price = request.form.get("price", "").strip()
-        old_price = request.form.get("old_price", "").strip()
-        description = request.form.get("description", "").strip()
-        selected_sizes = request.form.getlist("sizes")
-
-        # ⭐️ Rating added
-        rating_raw = request.form.get("rating")
         try:
-            rating = float(rating_raw)
-        except:
-            rating = None
+            name = request.form.get("name", "").strip()
+            price = request.form.get("price", "").strip()
+            old_price = request.form.get("old_price", "").strip()
+            description = request.form.get("description", "").strip()
+            selected_sizes = request.form.getlist("sizes")
 
-        # stock per size
-        stock = {}
-        for s in ["S", "M", "L", "XL", "XXL"]:
-            qty_str = request.form.get(f"stock_{s}", "0")
+            # Rating
+            rating_raw = request.form.get("rating")
             try:
-                qty = int(qty_str)
-            except ValueError:
-                qty = 0
-            if s in selected_sizes and qty > 0:
-                stock[s] = qty
+                rating = float(rating_raw)
+            except:
+                rating = None
 
-        image_files = request.files.getlist("images")
-        saved_images = []
+            # Stock per size
+            stock = {}
+            for s in ["S", "M", "L", "XL", "XXL"]:
+                qty_str = request.form.get(f"stock_{s}", "0")
+                try:
+                    qty = int(qty_str)
+                except ValueError:
+                    qty = 0
+                if s in selected_sizes and qty > 0:
+                    stock[s] = qty
 
-        for file in image_files[:4]:
-            if file and allowed_file(file.filename):
-                filename = datetime.datetime.now().strftime("%Y%m%d%H%M%S") + "_" + secure_filename(file.filename)
-                file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
-                saved_images.append(filename)
+            # Image upload
+            image_files = request.files.getlist("images")
+            saved_images = []
 
-        if not saved_images:
-            flash("Upload at least one image", "error")
+            for file in image_files[:4]:
+                if file and allowed_file(file.filename):
+                    upload_result = cloudinary.uploader.upload(file)
+                    image_url = upload_result["secure_url"]
+                    saved_images.append(image_url)
+
+            if not saved_images:
+                flash("Upload at least one image", "error")
+                return redirect(url_for("add_product"))
+
+            main_image = saved_images[0]
+
+            # Insert into database
+            products_col.insert_one({
+                "name": name,
+                "description": description,
+                "price": float(price),
+                "old_price": float(old_price) if old_price else None,
+                "image_filename": main_image,
+                "images": saved_images,
+                "sizes": selected_sizes,
+                "stock": stock,
+                "rating": rating,
+                "created_at": datetime.datetime.now()
+            })
+
+            flash("Product added!", "success")
+            return redirect(url_for("admin_products"))
+
+        except Exception as e:
+            print("Add product error:", e)
+            traceback.print_exc()
+            flash("Error adding product. Check logs.", "error")
             return redirect(url_for("add_product"))
 
-        main_image = saved_images[0]
-
-        # insert DB
-        products_col.insert_one({
-            "name": name,
-            "description": description,
-            "price": float(price),
-            "old_price": float(old_price) if old_price else None,
-            "image_filename": main_image,
-            "images": saved_images,
-            "sizes": selected_sizes,
-            "stock": stock,
-            "rating": rating,     # ⭐️ Stored Here
-            "created_at": datetime.datetime.now()
-        })
-
-        flash("Product added!", "success")
-        return redirect(url_for("admin_products"))
-
     return render_template("upload.html", active_page="upload")
-#====================================================
+
 
 
 # =====================================================
